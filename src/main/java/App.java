@@ -83,22 +83,31 @@ public class App {
                                              CSVWriter.NO_QUOTE_CHARACTER,
                                              CSVWriter.DEFAULT_ESCAPE_CHARACTER,
                                              CSVWriter.RFC4180_LINE_END);
+            // new csv file headers, include v p q and 3 different channels
             String[] newHeader = {"device", "timeKey", "vA", "vB", "vC", "pA", "pB", "pC", "qA", "qB", "qC"};
             writer.writeNext(newHeader);
 
             boolean c = true;
 
             while (c) {
+                // read voltage first
                 fillingData(txName, vReader, devices, result, "V");
+
+                // read p
                 fillingData(txName, pReader, devices, result, "P");
+
+                // read q last
                 boolean more = fillingData(txName, qReader, devices, result, "Q");
+
                 // write data to new csv file
                 result.forEach((k, v) -> {
                     writer.writeAll(v, false);
                 });
 
+                // cleanup memory
                 result = new HashMap<>();
 
+                // init new arraylist for each device
                 for (String device : devices) {
                     result.put(device, new ArrayList<>());
                 }
@@ -108,6 +117,7 @@ public class App {
                 }
             }
 
+            // close resources
             writer.close();
             vReader.close();
             pReader.close();
