@@ -1,38 +1,55 @@
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 import com.opencsv.CSVReader;
 import com.opencsv.CSVWriter;
 import com.opencsv.exceptions.CsvValidationException;
-
-import java.io.*;
-import java.nio.file.Path;
-import java.util.*;
 
 public class App {
 
 
     public static void main(String[] args) {
 
+        ExecutorService runService = Executors.newFixedThreadPool(4);
 
         // loop through folders to pass 3 files on each
-        File src = new File("/Users/e4s/Documents/Processed_Synthetic_Data");
+        File src = new File("/Users/ericwang/Downloads/Processed Synthetic Data ");
         File[] folders = src.listFiles();
         for (int i = 0; i < folders.length; i++) {
             if (folders[i].isDirectory()) {
-                generateCsv(folders[i].toPath(), folders[i].getName());
+                int finalI = i;
+                runService.submit(() -> {
+                    generateCsv(folders[finalI].toPath(), folders[finalI].getName());
+                });
             }
         }
 
-
+        // wait for done
+        runService.shutdown();
     }
 
 
     private static void generateCsv(Path folder, String txName) {
         Map<String, List<String[]>> result = new LinkedHashMap<>();
 
-
+        System.out.println("starting - " + txName + " at: " + new Date());
         try {
 
             InputStream headerIn = new FileInputStream(folder + "/V.csv");
-
 
             CSVReader headerReader = new CSVReader(new InputStreamReader(headerIn));
             // find all devices
@@ -40,7 +57,7 @@ public class App {
             List<String> devices = new ArrayList<>();
             // 1 ~ length - 1
             for (int i = 1; i < header.length; i++) {
-                String device = header[i].substring(header[i].indexOf(".") + 4, header[i].lastIndexOf("."));
+                String device = header[i].substring(header[i].indexOf(".") + 4);
                 devices.add(device);
                 result.put(device, new ArrayList<>());
             }
@@ -56,25 +73,28 @@ public class App {
             CSVReader pReader = new CSVReader(new InputStreamReader(pIn));
             CSVReader qReader = new CSVReader(new InputStreamReader(qIn));
 
-            vReader.skip(1);
-            pReader.skip(1);
-            qReader.skip(1);
+            // channel mapping
+            String[] vHeader = vReader.readNext();
+            String[] pHeader = vReader.readNext();
+            String[] qHeader = vReader.readNext();
 
-
-            CSVWriter writer = new CSVWriter(new FileWriter("/Users/e4s/Workspace/csv/" + txName + "_data.csv"));
-
-            String[] newHeader = {"device", "timeKey", "v", "p", "q"};
+            CSVWriter writer = new CSVWriter(new FileWriter("/Users/ericwang/Workspace/csv/" + txName + "_data.csv"),
+                                             CSVWriter.DEFAULT_SEPARATOR,
+                                             CSVWriter.NO_QUOTE_CHARACTER,
+                                             CSVWriter.DEFAULT_ESCAPE_CHARACTER,
+                                             CSVWriter.RFC4180_LINE_END);
+            String[] newHeader = {"device", "timeKey", "vA", "vB", "vC", "pA", "pB", "pC", "qA", "qB", "qC"};
             writer.writeNext(newHeader);
 
             boolean c = true;
 
             while (c) {
-                fillingData(vReader, devices, result, "V");
-                fillingData(pReader, devices, result, "P");
-                boolean more = fillingData(qReader, devices, result, "Q");
+                fillingData(txName, vReader, devices, result, "V");
+                fillingData(txName, pReader, devices, result, "P");
+                boolean more = fillingData(txName, qReader, devices, result, "Q");
                 // write data to new csv file
                 result.forEach((k, v) -> {
-                    v.forEach(writer::writeNext);
+                    writer.writeAll(v, false);
                 });
 
                 result = new HashMap<>();
@@ -96,10 +116,14 @@ public class App {
         } catch (CsvValidationException | IOException e) {
             throw new RuntimeException(e);
         }
+
+        System.out.println("finished - " + txName + " at: " + new Date());
     }
 
 
-    private static boolean fillingData(CSVReader reader, List<String> devices, Map<String, List<String[]>> result, String type) throws CsvValidationException, IOException {
+    private static boolean fillingData(String txName, CSVReader reader, List<String> devices,
+                                       Map<String, List<String[]>> result, String type)
+        throws CsvValidationException, IOException {
         int pageSize = 10000;
 
         // filling data with voltage
@@ -115,34 +139,54 @@ public class App {
 
                 // find the data list for current device
                 List<String[]> dtos = result.get(devices.get(i));
-
+                // find channel
                 String[] finalNextLine = nextLine;
                 Optional<String[]> exist = dtos.stream().filter(dto -> finalNextLine[0].equals(dto[1])).findFirst();
                 String[] k;
-                if (exist.isEmpty()) {
+                String deviceName = devices.get(i);
+                String channel = deviceName.substring(deviceName.indexOf(".") + 1);
+                //  String[] newHeader = {"device", "timeKey", "vA", "vB", "vC", "pA", "pB", "pC", "qA", "qB", "qC"};
+                if (!exist.isEmpty()) {
+                    k = exist.get();
+                } else {
                     // not found. create one
-                    k = new String[5];
-                    k[0] = (devices.get(i));
+                    k = new String[11];
+                    k[0] = deviceName.substring(0, deviceName.indexOf("."));
                     k[1] = (finalNextLine[0]);
                     dtos.add(k);
-                } else {
-                    k = exist.get();
                 }
-
                 switch (type) {
                     case "V":
-                        k[2] = finalNextLine[i + 1];
+                        if (channel.equals("A")) {
+                            k[2] = finalNextLine[i + 1];
+                        } else if (channel.equals("B")) {
+                            k[3] = finalNextLine[i + 1];
+                        } else if (channel.equals("C")) {
+                            k[4] = finalNextLine[i + 1];
+                        }
+
                         break;
                     case "P":
-                        k[3] = finalNextLine[i + 1];
+                        if (channel.equals("A")) {
+                            k[5] = finalNextLine[i + 1];
+                        } else if (channel.equals("B")) {
+                            k[6] = finalNextLine[i + 1];
+                        } else if (channel.equals("C")) {
+                            k[7] = finalNextLine[i + 1];
+                        }
                         break;
                     case "Q":
-                        k[4] = finalNextLine[i + 1];
+                        if (channel.equals("A")) {
+                            k[8] = finalNextLine[i + 1];
+                        } else if (channel.equals("B")) {
+                            k[9] = finalNextLine[i + 1];
+                        } else if (channel.equals("C")) {
+                            k[10] = finalNextLine[i + 1];
+                        }
                         break;
                     default:
                         break;
                 }
-
             }
 
             // do next
@@ -152,11 +196,9 @@ public class App {
             }
         }
 
-
         if (type.equals("Q")) {
-            System.out.println("finished: " + rowNumber);
+            System.out.println("TX: " + txName + "finished: " + rowNumber);
         }
-
 
         return more;
     }
